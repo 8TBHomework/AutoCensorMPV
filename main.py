@@ -40,71 +40,72 @@ class OverlayManager:
         :return: fresh overlay
         """
 
-        o = player.create_image_overlay()
+        o = self.player.create_image_overlay()
         self.to_clear.append((o.overlay_id, time.time() + expire_in))
         return o
 
 
-temp_path = tempfile.mkdtemp()
-detector = NudeDetector()
-player = mpv.MPV(input_default_bindings=True, input_vo_keyboard=True)
-overlays = OverlayManager(player)
-d = {}  # dict of property values used later
+class AutoCensor:
+    def __init__(self, temp_path: str, model_name="default", **kwargs):
+        self.temp_path = temp_path
+        self.detector = NudeDetector(model_name)
+        self.player = mpv.MPV(**kwargs)
+        self.overlays = OverlayManager(self.player)
+        self.props = {}  # dict of property values used later
+
+        self.player.observe_property("osd-dimensions/mt", self.store_prop)
+        self.player.observe_property("osd-dimensions/ml", self.store_prop)
+        self.player.observe_property("osd-dimensions/w", self.store_prop)
+        self.player.observe_property("osd-dimensions/h", self.store_prop)
+        self.player.observe_property("width", self.store_prop)
+        self.player.observe_property("height", self.store_prop)
+
+        self.player.observe_property("time-pos", self.work)
+
+    def store_prop(self, name, value):
+        self.props[name] = value
+
+    def work(self, _, value):  # time-pos observer
+        if value is None or value <= 0:
+            return
+        self.overlays.cleanup()
+
+        # osd_w is probably full window width, video is justified to be in the center, we subtract the margin here
+        scale_x = (self.props["osd-dimensions/w"] - 2 * self.props["osd-dimensions/ml"]) / self.props["width"]
+        scale_y = (self.props["osd-dimensions/h"] - 2 * self.props["osd-dimensions/mt"]) / self.props["height"]
+
+        frame_file = os.path.join(self.temp_path, f"frame.png")
+
+        pillow_img = self.player.screenshot_raw()
+        pillow_img.save(frame_file)
+
+        results = self.detector.detect(frame_file, mode="fast")
+
+        print(f"{value:.2f}s {list(map(itemgetter('label'), results))}")
+
+        for detection in results:
+            if detection["label"] in CENSORED_LABELS:
+                x1 = detection["box"][0]
+                y1 = detection["box"][1]
+                x2 = detection["box"][2]
+                y2 = detection["box"][3]
+
+                box_w = x2 - x1
+                box_h = y2 - y1
+                pos_x = x1
+                pos_y = y1
+
+                box_sw = box_w * scale_x
+                box_sh = box_h * scale_y
+                pos_sx = pos_x * scale_x + self.props["osd-dimensions/ml"]
+                pos_sy = pos_y * scale_y + self.props["osd-dimensions/mt"]
+
+                img = Image.new('RGBA', (int(box_sw), int(box_sh)), (0, 0, 0, 255))
+                self.overlays.next_overlay().update(img, (int(pos_sx), int(pos_sy)))
 
 
-def store_property(_name, value):
-    global d
-    d[_name] = value
-
-
-@player.property_observer('time-pos')
-def time_observer(_name, value):
-    if value is None or value <= 0:
-        return
-    overlays.cleanup()
-
-    # osd_w is probably full window width, video is justified to be in the center, we subtract the margin here
-    scale_x = (d["osd-dimensions/w"] - 2 * d["osd-dimensions/ml"]) / d["width"]
-    scale_y = (d["osd-dimensions/h"] - 2 * d["osd-dimensions/mt"]) / d["height"]
-
-    pillow_img = player.screenshot_raw()
-    pillow_img.save(os.path.join(temp_path, f"frame.png"))
-
-    results = detector.detect(os.path.join(temp_path, f"frame.png"), mode="fast")
-
-    print(f"{value:.2f}s {list(map(itemgetter('label'), results))}")
-
-    for detection in results:
-        if detection["label"] in CENSORED_LABELS:
-            x1 = detection["box"][0]
-            y1 = detection["box"][1]
-            x2 = detection["box"][2]
-            y2 = detection["box"][3]
-
-            box_w = x2 - x1
-            box_h = y2 - y1
-            pos_x = x1
-            pos_y = y1
-
-            box_sw = box_w * scale_x
-            box_sh = box_h * scale_y
-            pos_sx = pos_x * scale_x + d["osd-dimensions/ml"]
-            pos_sy = pos_y * scale_y + d["osd-dimensions/mt"]
-
-            img = Image.new('RGBA', (int(box_sw), int(box_sh)), (0, 0, 0, 255))
-            overlays.next_overlay().update(img, (int(pos_sx), int(pos_sy)))
-
-
-player['vo'] = 'gpu'
-
-player.observe_property("osd-dimensions/mt", store_property)
-player.observe_property("osd-dimensions/ml", store_property)
-player.observe_property("osd-dimensions/w", store_property)
-player.observe_property("osd-dimensions/h", store_property)
-player.observe_property("width", store_property)
-player.observe_property("height", store_property)
-
-player.play(sys.argv[1])
-player.wait_for_playback()
-
-del player
+with tempfile.TemporaryDirectory(prefix="autocensor") as temp_dir:
+    ac = AutoCensor(temp_dir, input_default_bindings=True, input_vo_keyboard=True)
+    ac.player['vo'] = 'gpu'
+    ac.player.play(sys.argv[1])
+    ac.player.wait_for_playback()
