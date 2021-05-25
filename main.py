@@ -10,29 +10,6 @@ import time
 from PIL import Image
 from nudenet import NudeDetector
 
-
-class OverlayManager:
-
-    def __init__(self, player: mpv.MPV):
-        self.player = player
-        self.overlays: [mpv.ImageOverlay] = []
-        self.to_clear = []
-
-    def cleanup(self):
-        for overlay_id, cleared in self.to_clear:
-            if cleared <= time.time():
-                self.player.remove_overlay(overlay_id)
-                self.to_clear.remove((overlay_id, cleared))
-
-    def next_overlay(self, clear=2) -> mpv.ImageOverlay:
-        if len(self.overlays) == 0:
-            self.overlays.append(player.create_image_overlay())
-
-        o = self.overlays.pop()
-        self.to_clear.append((o.overlay_id, time.time() + clear))
-        return o
-
-
 CENSORED_LABELS = [
     "EXPOSED_GENITALIA_F",
     "COVERED_GENITALIA_F",
@@ -40,14 +17,42 @@ CENSORED_LABELS = [
     "EXPOSED_BUTTOCKS"
 ]
 
+
+class OverlayManager:
+
+    def __init__(self, player: mpv.MPV):
+        self.player = player
+        self.to_clear: [mpv.ImageOverlay] = []
+
+    def cleanup(self):
+        """
+        Run periodically to actually remove expired overlays
+        """
+        for overlay_id, cleared in self.to_clear:
+            if cleared <= time.time():
+                self.player.remove_overlay(overlay_id)
+                self.to_clear.remove((overlay_id, cleared))
+
+    def next_overlay(self, expire_in=2) -> mpv.ImageOverlay:
+        """
+        Returns a fresh overlay to draw onto.
+        :param expire_in: When should the overlay be deleted again (seconds from now)
+        :return: fresh overlay
+        """
+
+        o = player.create_image_overlay()
+        self.to_clear.append((o.overlay_id, time.time() + expire_in))
+        return o
+
+
 temp_path = tempfile.mkdtemp()
 detector = NudeDetector()
 player = mpv.MPV(input_default_bindings=True, input_vo_keyboard=True)
 overlays = OverlayManager(player)
-d = {}
+d = {}  # dict of property values used later
 
 
-def store_dimension(_name, value):
+def store_property(_name, value):
     global d
     d[_name] = value
 
@@ -92,12 +97,12 @@ def time_observer(_name, value):
 
 player['vo'] = 'gpu'
 
-player.observe_property("osd-dimensions/mt", store_dimension)
-player.observe_property("osd-dimensions/ml", store_dimension)
-player.observe_property("osd-dimensions/w", store_dimension)
-player.observe_property("osd-dimensions/h", store_dimension)
-player.observe_property("width", store_dimension)
-player.observe_property("height", store_dimension)
+player.observe_property("osd-dimensions/mt", store_property)
+player.observe_property("osd-dimensions/ml", store_property)
+player.observe_property("osd-dimensions/w", store_property)
+player.observe_property("osd-dimensions/h", store_property)
+player.observe_property("width", store_property)
+player.observe_property("height", store_property)
 
 player.play(sys.argv[1])
 player.wait_for_playback()
