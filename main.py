@@ -10,7 +10,7 @@ import mpv
 from PIL import Image
 from nudenet import NudeDetector
 
-CENSORED_LABELS = [
+DEFAULT_CENSORED_LABELS = [
     "EXPOSED_GENITALIA_F",
     "COVERED_GENITALIA_F",
     "EXPOSED_BREAST_F",
@@ -48,7 +48,7 @@ class OverlayManager:
 class AutoCensor:
     def __init__(self, temp_path: str, model_name="default", censored_labels=None, **kwargs):
         if censored_labels is None:
-            censored_labels = CENSORED_LABELS
+            censored_labels = DEFAULT_CENSORED_LABELS
 
         self.temp_path = temp_path
         self.censored_labels = censored_labels
@@ -116,26 +116,29 @@ def play(args):
         ac.player.wait_for_playback()
 
 
-def info(args):
-    if args.labels:
-        print("Available labels")
-        for label in NudeDetector(args.model).classes:
-            print(label)
+def labels(args):
+    if args.default:
+        l = DEFAULT_CENSORED_LABELS
+    else:
+        l = NudeDetector(args.model).classes
+
+    for label in l:
+        print(label)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--model", default="default", help="Which Nudenet model to use")
-    subparsers = parser.add_subparsers()
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
     play_parser = subparsers.add_parser("play")
     play_parser.add_argument("-c", "--censor", action="append", default=None, help="List of labels to censor")
     play_parser.add_argument("path", type=str, help="Path or URL to play")
     play_parser.set_defaults(func=play)
 
-    info_parser = subparsers.add_parser("info")
-    info_parser.add_argument("-l", "--labels", action="store_true", help="Output a list of available labels")
-    info_parser.set_defaults(func=info)
+    labels_parser = subparsers.add_parser("labels")
+    labels_parser.add_argument("-d", "--default", action="store_true", help="Only print default labels")
+    labels_parser.set_defaults(func=labels)
 
     parsed = parser.parse_args()
     parsed.func(parsed)
