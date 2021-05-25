@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 import os
 import sys
+import tempfile
+import time
 from operator import itemgetter
 
 import mpv
-import tempfile
-import time
-
 from PIL import Image
 from nudenet import NudeDetector
 
