@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import sys
 import tempfile
@@ -45,8 +46,12 @@ class OverlayManager:
 
 
 class AutoCensor:
-    def __init__(self, temp_path: str, model_name="default", **kwargs):
+    def __init__(self, temp_path: str, model_name="default", censored_labels=None, **kwargs):
+        if censored_labels is None:
+            censored_labels = CENSORED_LABELS
+
         self.temp_path = temp_path
+        self.censored_labels = censored_labels
         self.detector = NudeDetector(model_name)
         self.player = mpv.MPV(**kwargs)
         self.overlays = OverlayManager(self.player)
@@ -83,7 +88,7 @@ class AutoCensor:
         print(f"{value:.2f}s {list(map(itemgetter('label'), results))}")
 
         for detection in results:
-            if detection["label"] in CENSORED_LABELS:
+            if detection["label"] in self.censored_labels:
                 x1 = detection["box"][0]
                 y1 = detection["box"][1]
                 x2 = detection["box"][2]
@@ -103,8 +108,34 @@ class AutoCensor:
                 self.overlays.next_overlay().update(img, (int(pos_sx), int(pos_sy)))
 
 
-with tempfile.TemporaryDirectory(prefix="autocensor") as temp_dir:
-    ac = AutoCensor(temp_dir, input_default_bindings=True, input_vo_keyboard=True)
-    ac.player['vo'] = 'gpu'
-    ac.player.play(sys.argv[1])
-    ac.player.wait_for_playback()
+def play(args):
+    with tempfile.TemporaryDirectory(prefix="autocensor") as temp_dir:
+        ac = AutoCensor(temp_dir, args.model, args.censor, input_default_bindings=True, input_vo_keyboard=True)
+        ac.player['vo'] = 'gpu'
+        ac.player.play(args.path)
+        ac.player.wait_for_playback()
+
+
+def info(args):
+    if args.labels:
+        print("Available labels")
+        for label in NudeDetector(args.model).classes:
+            print(label)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--model", default="default", help="Which Nudenet model to use")
+    subparsers = parser.add_subparsers()
+
+    play_parser = subparsers.add_parser("play")
+    play_parser.add_argument("-c", "--censor", action="append", default=None, help="List of labels to censor")
+    play_parser.add_argument("path", type=str, help="Path or URL to play")
+    play_parser.set_defaults(func=play)
+
+    info_parser = subparsers.add_parser("info")
+    info_parser.add_argument("-l", "--labels", action="store_true", help="Output a list of available labels")
+    info_parser.set_defaults(func=info)
+
+    parsed = parser.parse_args()
+    parsed.func(parsed)
